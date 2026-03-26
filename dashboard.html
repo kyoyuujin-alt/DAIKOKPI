@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>商品業績月度戰情室</title>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f9fafb; }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useCallback } = React;
+const {
+  LineChart, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip, Legend, ResponsiveContainer
+} = Recharts;
+
+// ── icons (inline SVG) ──────────────────────────────────────────────────────
+const Icon = ({ d, size = 16 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d={d} />
+  </svg>
+);
+const Icons = {
+  Download:    "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3",
+  Edit3:       "M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z",
+  Lock:        "M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2zM7 11V7a5 5 0 0 1 10 0v4",
+  Save:        "M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2zM17 21v-8H7v8M7 3v5h8",
+  TrendingUp:  "M23 6l-9.5 9.5-5-5L1 18M17 6h6v6",
+  TrendingDown:"M23 18l-9.5-9.5-5 5L1 6M17 18h6v-6",
+  Users:       "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
+  Package:     "M16.5 9.4l-9-5.18M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16zM3.27 6.96L12 12.01l8.73-5.05M12 22.08V12",
+  Calendar:    "M3 4h18v18H3zM16 2v4M8 2v4M3 10h18",
+  FileText:    "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8",
+  CheckCircle: "M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3",
+  AlertCircle: "M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zM12 8v4M12 16h.01",
+};
+
+// ── data factory ────────────────────────────────────────────────────────────
+const months = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+
+const createInitialData = () => ({
+  newRevenue: Array.from({ length: 12 }, (_, i) => ({
+    month: i + 1,
+    actual:   Math.floor(Math.random() * 500) + 100,
+    plan:     Math.floor(Math.random() * 400) + 200,
+    lastYear: Math.floor(Math.random() * 450) + 150,
+  })),
+  subscription: Array.from({ length: 12 }, (_, i) => ({
+    month: i + 1,
+    newSubscriptions:      Math.floor(Math.random() * 100) + 20,
+    existingSubscriptions: Math.floor(Math.random() * 300) + 100,
+    cancellations:         Math.floor(Math.random() * 50)  + 10,
+  })),
+  comments: Object.fromEntries(
+    Array.from({ length: 12 }, (_, i) => [
+      i + 1,
+      { status: 'not-achieved', analysis: '', adjustment: '', locked: false }
+    ])
+  ),
+});
+
+const PRODUCTS = ['EX','MACA','DHA','AJ','SAB'];
+const initialData = Object.fromEntries(PRODUCTS.map(p => [p, createInitialData()]));
+
+// ── KPI card ────────────────────────────────────────────────────────────────
+function KPICard({ title, value, icon, trend, subtitle }) {
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-5 flex items-start gap-4">
+      <div className="p-3 bg-gray-50 rounded-lg text-gray-600">
+        <Icon d={Icons[icon]} size={24} />
+      </div>
+      <div className="flex-1">
+        <p className="text-sm text-gray-500 font-medium">{title}</p>
+        <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
+        {trend !== undefined && (
+          <div className={`flex items-center gap-1 mt-1 text-sm ${trend >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            <Icon d={trend >= 0 ? Icons.TrendingUp : Icons.TrendingDown} size={14} />
+            <span>{trend >= 0 ? '+' : ''}{trend.toFixed(1)}%</span>
+          </div>
+        )}
+        {subtitle && <p className="text-xs text-gray-400 mt-1">{subtitle}</p>}
+      </div>
+    </div>
+  );
+}
+
+// ── main app ─────────────────────────────────────────────────────────────────
+function Dashboard() {
+  const [activeProduct, setActiveProduct] = useState('EX');
+  const [activeTab,     setActiveTab]     = useState('revenue');
+  const [editMode,      setEditMode]      = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState(1);
+  const [commentMonth,  setCommentMonth]  = useState(1);   // ← independent month for comment section
+  const [productsData,  setProductsData]  = useState(initialData);
+
+  const cur = productsData[activeProduct];
+
+  // kpis
+  const totalActual        = cur.newRevenue.reduce((s,d) => s + d.actual, 0);
+  const curMonthActual     = cur.newRevenue[selectedMonth - 1]?.actual || 0;
+  const curMonthPlan       = cur.newRevenue[selectedMonth - 1]?.plan   || 1;
+  const totalPlan          = cur.newRevenue.reduce((s,d) => s + d.plan, 0);
+  const totalSubs          = cur.subscription.reduce((s,d) => s + d.newSubscriptions + d.existingSubscriptions, 0);
+  const prevMonthTotal     = selectedMonth > 1
+    ? cur.subscription[selectedMonth-2].newSubscriptions + cur.subscription[selectedMonth-2].existingSubscriptions : 0;
+  const curMonthTotal      = cur.subscription[selectedMonth-1].newSubscriptions + cur.subscription[selectedMonth-1].existingSubscriptions;
+  const monthlyChange      = prevMonthTotal > 0 ? ((curMonthTotal - prevMonthTotal) / prevMonthTotal) * 100 : 0;
+
+  // chart data
+  const revenueChart = cur.newRevenue.map((d,i) => ({
+    name: months[i], 實績: d.actual, 計畫: d.plan, 去年: d.lastYear,
+  }));
+  const subsChart = cur.subscription.map((d,i) => ({
+    name: months[i], 新定期: d.newSubscriptions, 既存定期: d.existingSubscriptions, 解約: d.cancellations,
+  }));
+
+  // updaters
+  const updateRevenue = useCallback((month, field, value) => {
+    setProductsData(prev => ({
+      ...prev,
+      [activeProduct]: {
+        ...prev[activeProduct],
+        newRevenue: prev[activeProduct].newRevenue.map(d =>
+          d.month === month ? { ...d, [field]: Number(value) } : d
+        ),
+      },
+    }));
+  }, [activeProduct]);
+
+  const updateSubs = useCallback((month, field, value) => {
+    setProductsData(prev => ({
+      ...prev,
+      [activeProduct]: {
+        ...prev[activeProduct],
+        subscription: prev[activeProduct].subscription.map(d =>
+          d.month === month ? { ...d, [field]: Number(value) } : d
+        ),
+      },
+    }));
+  }, [activeProduct]);
+
+  const updateComment = useCallback((field, value) => {
+    setProductsData(prev => ({
+      ...prev,
+      [activeProduct]: {
+        ...prev[activeProduct],
+        comments: {
+          ...prev[activeProduct].comments,
+          [commentMonth]: {
+            ...prev[activeProduct].comments[commentMonth],
+            [field]: value,
+          },
+        },
+      },
+    }));
+  }, [activeProduct, commentMonth]);
+
+  const lockComment = () => updateComment('locked', true);
+
+  const exportCSV = () => {
+    const data = activeTab === 'revenue' ? cur.newRevenue : cur.subscription;
+    const csv  = [Object.keys(data[0]).join(','), ...data.map(r => Object.values(r).join(','))].join('\n');
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(new Blob([csv], { type:'text/csv' })),
+      download: `${activeProduct}_${activeTab}_report.csv`,
+    });
+    a.click();
+  };
+
+  const comment = cur.comments[commentMonth];
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+
+      {/* ── Header ── */}
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">商品業績月度戰情室</h1>
+              <p className="text-sm text-gray-500 mt-0.5">商品數據管理與分析系統</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setEditMode(!editMode)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  editMode ? 'bg-amber-100 text-amber-700 border border-amber-200'
+                           : 'bg-gray-100 text-gray-600 border border-gray-200 hover:bg-gray-200'}`}>
+                <Icon d={editMode ? Icons.Lock : Icons.Edit3} size={16} />
+                {editMode ? '編輯中' : '唯讀模式'}
+              </button>
+              <button onClick={exportCSV}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+                <Icon d={Icons.Download} size={16} />
+                匯出月報表
+              </button>
+            </div>
+          </div>
+
+          {/* product tabs */}
+          <div className="flex gap-2 mt-4">
+            {PRODUCTS.map(p => (
+              <button key={p} onClick={() => setActiveProduct(p)}
+                className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                  activeProduct === p
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'bg-white text-gray-600 border border-gray-200 hover:border-gray-300 hover:bg-gray-50'}`}>
+                {p}
+              </button>
+            ))}
+          </div>
+
+          {/* sub tabs */}
+          <div className="flex gap-1 mt-3 bg-gray-100 p-1 rounded-lg w-fit">
+            {[['revenue','新規業績概況'],['subscription','定期推移分析']].map(([v,l]) => (
+              <button key={v} onClick={() => setActiveTab(v)}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  activeTab === v ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
+                {l}
+              </button>
+            ))}
+          </div>
+        </div>
+      </header>
+
+      {/* ── Main ── */}
+      <main className="max-w-7xl mx-auto px-6 py-6">
+
+        {activeTab === 'revenue' ? (
+          <>
+            {/* KPIs */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <KPICard title="本商品新規人數 (單月)" value={curMonthActual.toLocaleString()}
+                icon="Users" trend={((curMonthActual - curMonthPlan) / curMonthPlan) * 100}
+                subtitle={`${selectedMonth}月份`} />
+              <KPICard title="本商品新規人數 (累計)" value={totalActual.toLocaleString()}
+                icon="Package" subtitle="年度累計" />
+              <KPICard title="計畫達成率" value={`${((totalActual / totalPlan) * 100).toFixed(1)}%`}
+                icon="TrendingUp" subtitle="實績 vs 計畫" />
+            </div>
+
+            {/* chart */}
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 mb-6">
+              <h3 className="text-sm font-semibold text-gray-900 mb-4">業績趨勢圖</h3>
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={revenueChart}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="name" tick={{ fontSize:12 }} stroke="#9ca3af" />
+                  <YAxis tick={{ fontSize:12 }} stroke="#9ca3af" />
+                  <Tooltip contentStyle={{ backgroundColor:'white', border:'1px solid #e5e7eb', borderRadius:'8px', fontSize:'12px' }} />
+                  <Legend />
+                  <Line type="monotone" dataKey="實績" stroke="#2563eb" strokeWidth={2} dot={{ r:4 }} />
+                  <Line type="monotone" dataKey="計畫" stroke="#9ca3af" strokeWidth={2} strokeDasharray="5 5" dot={{ r:3 }} />
+                  <Line type="monotone" dataKey="去年" stroke="#d1d5db" strokeWidth={1} dot={{ r:2 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* table */}
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden mb-6">
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-900">月別業績數據</h3>
+                <div className="flex items-center gap-2">
+                  <Icon d={Icons.Calendar} size={16} />
+                  <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))}
+                    className="text-sm border border-gray-200 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    {months.map((m,i) => <option key={i} value={i+1}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      {['月份','實績','計畫','計畫比 (%)','去年','去年比 (%)'].map(h => (
+                        <th key={h} className={`px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider ${h==='月份'?'text-left':'text-right'}`}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {cur.newRevenue.map(row => {
+                      const planRatio = row.plan > 0 ? ((row.actual / row.plan) * 100).toFixed(1) : '0.0';
+                      const yearRatio = row.lastYear > 0 ? ((row.actual / row.lastYear) * 100).toFixed(1) : '0.0';
+                      const sel = row.month === selectedMonth;
+                      return (
+                        <tr key={row.month} onClick={() => setSelectedMonth(row.month)}
+                          className={`${sel?'bg-blue-50':'hover:bg-gray-50'} transition-colors cursor-pointer`}>
+                          <td className="px-4 py-3 text-sm font-medium text-gray-900">{months[row.month-1]}</td>
+                          <td className="px-4 py-3 text-right">
+                            {editMode
+                              ? <input type="number" value={row.actual}
+                                  onChange={e => updateRevenue(row.month,'actual',e.target.value)}
+                                  onClick={e => e.stopPropagation()}
+                                  className="w-20 text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                              : <span className="text-sm text-gray-900 font-medium">{row.actual.toLocaleString()}</span>}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {editMode
+                              ? <input type="number" value={row.plan}
+                                  onChange={e => updateRevenue(row.month,'plan',e.target.value)}
+                                  onClick={e => e.stopPropagation()}
+                                  className="w-20 text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                              : <span className="text-sm text-gray-600">{row.plan.toLocaleString()}</span>}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className={`text-sm font-medium ${Number(planRatio)>=100?'text-green-600':'text-red-600'}`}>{planRatio}%</span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {editMode
+                              ? <input type="number" value={row.lastYear}
+                                  onChange={e => updateRevenue(row.month,'lastYear',e.target.value)}
+                                  onClick={e => e.stopPropagation()}
+                                  className="w-20 text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                              : <span className="text-sm text-gray-600">{row.lastYear.toLocaleString()}</span>}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className={`text-sm font-medium ${Number(yearRatio)>=100?'text-green-600':'text-amber-600'}`}>{yearRatio}%</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* KPIs */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <KPICard title="定期總件數" value={totalSubs.toLocaleString()} icon="Package" subtitle="年度累計" />
+              <KPICard title="與上月相比"
+                value={`${monthlyChange>=0?'+':''}${monthlyChange.toFixed(1)}%`}
+                icon={monthlyChange>=0?'TrendingUp':'TrendingDown'} trend={monthlyChange}
+                subtitle={`${selectedMonth}月 vs ${selectedMonth>1?selectedMonth-1:12}月`} />
+              <KPICard title="本月定期件數" value={curMonthTotal.toLocaleString()} icon="Calendar" subtitle={`${selectedMonth}月份`} />
+            </div>
+
+            {/* chart */}
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 mb-6">
+              <h3 className="text-sm font-semibold text-gray-900 mb-4">定期推移趨勢圖</h3>
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={subsChart}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="name" tick={{ fontSize:12 }} stroke="#9ca3af" />
+                  <YAxis tick={{ fontSize:12 }} stroke="#9ca3af" />
+                  <Tooltip contentStyle={{ backgroundColor:'white', border:'1px solid #e5e7eb', borderRadius:'8px', fontSize:'12px' }} />
+                  <Legend />
+                  <Line type="monotone" dataKey="新定期" stroke="#10b981" strokeWidth={2} dot={{ r:4 }} />
+                  <Line type="monotone" dataKey="既存定期" stroke="#2563eb" strokeWidth={2} dot={{ r:4 }} />
+                  <Line type="monotone" dataKey="解約" stroke="#ef4444" strokeWidth={2} dot={{ r:4 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* table */}
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden mb-6">
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-900">定期件數明細</h3>
+                <div className="flex items-center gap-2">
+                  <Icon d={Icons.Calendar} size={16} />
+                  <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))}
+                    className="text-sm border border-gray-200 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    {months.map((m,i) => <option key={i} value={i+1}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      {['月份','新定期件數 (A)','既存定期件數 (B)','合計 (A+B)','解約件數','淨增減'].map(h => (
+                        <th key={h} className={`px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider ${h==='月份'?'text-left':'text-right'}`}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {cur.subscription.map(row => {
+                      const total = row.newSubscriptions + row.existingSubscriptions;
+                      const net   = row.newSubscriptions - row.cancellations;
+                      const sel   = row.month === selectedMonth;
+                      return (
+                        <tr key={row.month} onClick={() => setSelectedMonth(row.month)}
+                          className={`${sel?'bg-blue-50':'hover:bg-gray-50'} transition-colors cursor-pointer`}>
+                          <td className="px-4 py-3 text-sm font-medium text-gray-900">{months[row.month-1]}</td>
+                          <td className="px-4 py-3 text-right">
+                            {editMode
+                              ? <input type="number" value={row.newSubscriptions}
+                                  onChange={e => updateSubs(row.month,'newSubscriptions',e.target.value)}
+                                  onClick={e => e.stopPropagation()}
+                                  className="w-20 text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                              : <span className="text-sm text-green-600 font-medium">{row.newSubscriptions.toLocaleString()}</span>}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {editMode
+                              ? <input type="number" value={row.existingSubscriptions}
+                                  onChange={e => updateSubs(row.month,'existingSubscriptions',e.target.value)}
+                                  onClick={e => e.stopPropagation()}
+                                  className="w-20 text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                              : <span className="text-sm text-blue-600 font-medium">{row.existingSubscriptions.toLocaleString()}</span>}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className="text-sm text-gray-900 font-semibold">{total.toLocaleString()}</span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {editMode
+                              ? <input type="number" value={row.cancellations}
+                                  onChange={e => updateSubs(row.month,'cancellations',e.target.value)}
+                                  onClick={e => e.stopPropagation()}
+                                  className="w-20 text-right text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                              : <span className="text-sm text-red-600 font-medium">{row.cancellations.toLocaleString()}</span>}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className={`text-sm font-semibold ${net>=0?'text-green-600':'text-red-600'}`}>
+                              {net>=0?'+':''}{net.toLocaleString()}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ── Comment Section ── */}
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <Icon d={Icons.FileText} size={20} />
+              <h3 className="text-sm font-semibold text-gray-900">月份分析評論</h3>
+              {comment.locked && (
+                <span className="flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
+                  <Icon d={Icons.Lock} size={12} /> 已鎖定
+                </span>
+              )}
+            </div>
+            {/* ← independent month selector for comment section */}
+            <div className="flex items-center gap-2">
+              <Icon d={Icons.Calendar} size={16} />
+              <select value={commentMonth} onChange={e => setCommentMonth(Number(e.target.value))}
+                className="text-sm border border-gray-200 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                {months.map((m,i) => <option key={i} value={i+1}>{m}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* status */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">達標狀況</label>
+              <select value={comment.status} onChange={e => updateComment('status', e.target.value)}
+                disabled={comment.locked}
+                className={`w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${comment.locked?'bg-gray-50 cursor-not-allowed':'bg-white'}`}>
+                <option value="not-achieved">🔴 未達標</option>
+                <option value="achieved">🟢 已達標</option>
+              </select>
+              <div className={`mt-3 flex items-center gap-2 px-3 py-2 rounded-lg ${comment.status==='achieved'?'bg-green-50':'bg-red-50'}`}>
+                <Icon d={comment.status==='achieved'?Icons.CheckCircle:Icons.AlertCircle} size={16} />
+                <span className={`text-sm font-medium ${comment.status==='achieved'?'text-green-700':'text-red-700'}`}>
+                  {comment.status==='achieved'?'本月目標達成':'本月目標未達成'}
+                </span>
+              </div>
+            </div>
+
+            {/* analysis */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                {activeTab==='revenue'?'差異原因分析':'定期購獲取分析'}
+              </label>
+              <textarea value={comment.analysis} onChange={e => updateComment('analysis', e.target.value)}
+                disabled={comment.locked}
+                placeholder={activeTab==='revenue'?'請分析本月實績與計畫之間的差異原因...':'請分析本月定期購的獲取情況...'}
+                className={`w-full h-32 px-4 py-3 border border-gray-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 ${comment.locked?'bg-gray-50 cursor-not-allowed':'bg-white'}`} />
+            </div>
+
+            {/* adjustment */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">調整方針</label>
+              <textarea value={comment.adjustment} onChange={e => updateComment('adjustment', e.target.value)}
+                disabled={comment.locked}
+                placeholder="請說明下個月的調整策略與行動方案..."
+                className={`w-full h-32 px-4 py-3 border border-gray-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 ${comment.locked?'bg-gray-50 cursor-not-allowed':'bg-white'}`} />
+            </div>
+          </div>
+
+          {!comment.locked && (
+            <div className="mt-6 flex justify-end">
+              <button onClick={lockComment}
+                className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+                <Icon d={Icons.Save} size={16} />
+                儲存並鎖定本月評論
+              </button>
+            </div>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<Dashboard />);
+</script>
+</body>
+</html>
